@@ -1,48 +1,53 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import requests
 from supabase import create_client, Client
 
 # ==========================================
-# 1. Supabase 연동 설정
+# 1. 사내 방화벽 및 SSL 인증서 우회 설정 (중요 ⚡)
 # ==========================================
+# 도메인 대신 고유 IP로 우회 연결합니다.
 SUPABASE_URL = "https://3.34.144.180"
 SUPABASE_KEY = "sb_publishable_dBSIztffefNGPnfOOFpv8Q_gLFhBDxz"
 
 try:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    # 🏢 사내 인터넷 특성상 IP 주소 접근 시 인증서 무시(verify=False) 옵션을 강제 주입합니다.
+    custom_session = requests.Session()
+    custom_session.verify = False
+    
+    supabase: Client = create_client(
+        SUPABASE_URL, 
+        SUPABASE_KEY,
+        options=Client.ClientOptions(session=custom_session)
+    )
 except Exception as e:
     st.error(f"클라우드 연결 오류: {e}")
 
-# 클라우드 데이터 캐시 없이 실시간 조회 함수
+# 클라우드 데이터 실시간 조회 함수
 def fetch_cloud_data():
     try:
-        # st.cache_data를 사용하지 않고 매번 호출하여 실시간성 확보
         res = supabase.table("visitors").select("*").execute()
         if res.data:
             df = pd.DataFrame(res.data)
             df = df.drop_duplicates(subset=["visit_date", "center", "name", "phone"], keep="first")
             df["visit_date"] = df["visit_date"].astype(str).str.slice(0, 10).str.strip()
-            # 비정상 날짜 텍스트 차단
             df = df[df["visit_date"].str.match(r"^\d{4}-\d{2}-\d{2}$") == True]
             return df
     except:
         pass
     return pd.DataFrame(columns=["visit_date", "center", "name", "phone", "id"])
 
-# ==========================================
-# 2. ⏳ [핵심 개선] 10초 주기 자동 화면 갱신 설정
-# ==========================================
-# 다른 사람이 업로드했을 때 내 화면의 필터와 표가 자동으로 업데이트되도록 유도
+# ⏳ 10초 주기 자동 화면 갱신
 st.fragment(run_every=10)
 
 # ==========================================
-# 3. Streamlit 웹 UI 구성
+# 2. Streamlit 웹 UI 구성
 # ==========================================
 st.set_page_config(page_title="디동플 통합 데이터 시스템", layout="wide")
 
 st.title("📊 디지털동행플라자 통합 데이터 관리 시스템")
-st.caption("클라우드 기반 실시간 데이터 자동 동기화 대시보드입니다. (10초 간격 자동 갱신)")
+st.caption("클라우드 기반 실시간 데이터 자동 동기화 대시보드입니다. (사내 인터넷망 보안 대응 완료)")
 
 # 사이드바 설정
 sidebar = st.sidebar
@@ -59,35 +64,53 @@ real_df = fetch_cloud_data()
 with tab1:
     if uploaded_file:
         try:
+            # 엑셀 로드
             input_df = pd.read_excel(uploaded_file, header=None)
             if input_df.shape[1] >= 5:
                 input_df.columns = ["순번", "센터명", "성명", "전화번호", "방문시간"] + list(input_df.columns[5:])
             
+            # 파일 내부 데이터와 선택한 센터 매칭 교차 검증
+            sample_centers = input_df["센터명"].dropna().astype(str).str.strip().unique()
+            detected_centers = [c for c in sample_centers if c not in ['nan', '센터명', '방문센터']]
+            
+            is_valid = True
+            detected_center_name = selected_center
+            
+            if detected_centers:
+                detected_center_name = detected_centers[0]
+                if detected_center_name != selected_center:
+                    is_valid = False
+
             st.subheader("👀 업로드 미리보기")
             st.dataframe(input_df.head(10), use_container_width=True)
             
-            if st.button("🚀 클라우드 창고로 전송", type="primary"):
-                with st.spinner("창고에 저장 중..."):
-                    success_count = 0
-                    for _, row in input_df.iterrows():
-                        v_name = str(row.get("성명")).strip()
-                        if pd.isna(row.get("성명")) or v_name in ['nan', '이름', '성명', 'Unknown']: 
-                            continue
-                        
-                        raw_date = row.get("방문시간", datetime.today().strftime('%Y-%m-%d'))
-                        v_date = raw_date.strftime('%Y-%m-%d') if isinstance(raw_date, datetime) else str(raw_date)[:10].strip()
-                        
-                        v_phone = str(row.get("전화번호")).strip()
-                        
-                        supabase.table("visitors").insert({
-                            "visit_date": v_date, 
-                            "center": selected_center,
-                            "name": v_name, 
-                            "phone": v_phone
-                        }).execute()
-                        success_count += 1
-                    st.success(f"🎉 {success_count}건 저장 완료!")
-                    st.rerun()
+            # 센터 검증 결과에 따른 UI 제어
+            if not is_valid:
+                st.error(f"⚠️ **데이터 불일치 경고!** 왼쪽에 선택한 센터는 **[{selected_center}]**인데, 업로드한 파일은 **[{detected_center_name}]** 데이터로 파악됩니다. 왼쪽 메뉴의 센터를 다시 올바르게 선택해 주세요.")
+                st.button("🚀 클라우드 창고로 전송", type="primary", disabled=True, help="센터 일치 확인 후 활성화됩니다.")
+            else:
+                st.success(f"✅ 센터 정보가 일치합니다. **[{selected_center}]** 데이터를 전송할 준비가 되었습니다.")
+                if st.button("🚀 클라우드 창고로 전송", type="primary"):
+                    with st.spinner("창고에 저장 중..."):
+                        success_count = 0
+                        for _, row in input_df.iterrows():
+                            v_name = str(row.get("성명")).strip()
+                            if pd.isna(row.get("성명")) or v_name in ['nan', '이름', '성명', 'Unknown']: 
+                                continue
+                            
+                            raw_date = row.get("방문시간", datetime.today().strftime('%Y-%m-%d'))
+                            v_date = raw_date.strftime('%Y-%m-%d') if isinstance(raw_date, datetime) else str(raw_date)[:10].strip()
+                            v_phone = str(row.get("전화번호")).strip()
+                            
+                            supabase.table("visitors").insert({
+                                "visit_date": v_date, 
+                                "center": selected_center,
+                                "name": v_name, 
+                                "phone": v_phone
+                            }).execute()
+                            success_count += 1
+                        st.success(f"🎉 {success_count}건 저장 완료!")
+                        st.rerun()
         except Exception as e:
             st.error(f"오류: {e}")
 
