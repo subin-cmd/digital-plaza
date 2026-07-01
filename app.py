@@ -5,21 +5,23 @@ import requests
 from supabase import create_client, Client
 
 # ==========================================
-# 1. 사내 방화벽 및 SSL 인증서 우회 설정 (중요 ⚡)
+# 1. 사내 방화벽 및 SSL 인증서 우회 설정 (버전 충돌 교정 버전 ⚡)
 # ==========================================
-# 도메인 대신 고유 IP로 우회 연결합니다.
 SUPABASE_URL = "https://3.34.144.180"
 SUPABASE_KEY = "sb_publishable_dBSIztffefNGPnfOOFpv8Q_gLFhBDxz"
 
 try:
-    # 🏢 사내 인터넷 특성상 IP 주소 접근 시 인증서 무시(verify=False) 옵션을 강제 주입합니다.
+    # 🏢 사내 인터넷의 고유 IP 접근 차단을 막기 위해 인증서 검사(verify=False) 세션을 직접 생성합니다.
     custom_session = requests.Session()
     custom_session.verify = False
+    
+    # [수정] 버전 충돌을 일으키는 ClientOptions 대신 파이썬 표준 딕셔너리로 옵션을 안전하게 전달합니다.
+    safe_options = {"session": custom_session}
     
     supabase: Client = create_client(
         SUPABASE_URL, 
         SUPABASE_KEY,
-        options=Client.ClientOptions(session=custom_session)
+        options=safe_options
     )
 except Exception as e:
     st.error(f"클라우드 연결 오류: {e}")
