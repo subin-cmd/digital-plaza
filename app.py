@@ -6,7 +6,7 @@ from supabase import create_client, Client
 # ==========================================
 # 1. Supabase 연동 설정
 # ==========================================
-SUPABASE_URL = "https://woiwopauuxrknraneduwi.supabase.co"
+SUPABASE_URL = "https://3.34.144.180"
 SUPABASE_KEY = "sb_publishable_dBSIztffefNGPnfOOFpv8Q_gLFhBDxz"
 
 try:
